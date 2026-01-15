@@ -4,15 +4,34 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional
 
+
 @dataclass
 class UserPreferences:
-    travel_comfort: float
-    attractions_quality: float
-    activities_match: float
-    season_match: float
-    score: float
+    travel_comfort: int
+    attractions_quality: int
+    activities_match: int
+    season_match: int
     user_budget: str
     trip_cost: str
+    
+    def compute_score(self) -> int:
+        score = 0
+        if self.travel_comfort >= 4:
+            score += 2
+        elif self.travel_comfort >= 3:
+            score += 1
+        if self.attractions_quality >= 4:
+            score += 2
+        elif self.attractions_quality >= 3:
+            score += 1
+        score += self.activities_match
+        if self.season_match == 1:
+            score += 1
+        if self.user_budget == self.trip_cost:
+            score += 2
+        elif self.user_budget == "high" and self.trip_cost != "high":
+            score += 1
+        return score
 
 
 @dataclass
@@ -31,18 +50,19 @@ class TravelAgent:
         self.tree = self.model.tree_
     
     def decide(self, prefs: UserPreferences) -> Decision:
+        score = prefs.compute_score()
+        
         input_dict = {
             'travel_comfort': prefs.travel_comfort,
             'attractions_quality': prefs.attractions_quality,
             'activities_match': prefs.activities_match,
             'season_match': prefs.season_match,
-            'score': prefs.score,
+            'score': score,
             'user_budget': prefs.user_budget,
             'trip_cost': prefs.trip_cost
         }
         
         df = pd.DataFrame([input_dict])
-        
         df = pd.get_dummies(df, columns=['user_budget', 'trip_cost'])
         
         for col in self.feature_names:
@@ -58,10 +78,10 @@ class TravelAgent:
         
         if prediction == 0:
             recommendations = self._generate_recommendations(decision_path)
-            explanation = "Oferta odrzucona przez model"
+            explanation = f"Oferta odrzucona przez model (score: {score})"
         else:
             recommendations = None
-            explanation = "Oferta zaakceptowana przez model"
+            explanation = f"Oferta zaakceptowana przez model (score: {score})"
         
         return Decision(
             accepted=(prediction == 1),
@@ -108,35 +128,35 @@ class TravelAgent:
                 feature = step["feature"]
                 
                 if "user_budget_low" in feature:
-                    recommendations.append("Zwiększ budżet lub wybierz tańszą ofertę")
+                    recommendations.append("Zwieksz budzet lub wybierz tansza oferte")
                 elif "trip_cost_high" in feature:
-                    recommendations.append("Wybierz tańszy kierunek lub krótszy pobyt")
+                    recommendations.append("Wybierz tanszy kierunek lub krotszy pobyt")
                 elif "activities_match" in feature:
-                    recommendations.append("Wybierz ofertę lepiej dopasowaną do twoich zainteresowań")
+                    recommendations.append("Wybierz oferte lepiej dopasowana do twoich zainteresowan")
                 elif "season_match" in feature:
-                    recommendations.append("Rozważ inny termin wyjazdu")
+                    recommendations.append("Rozwaz inny termin wyjazdu")
                 elif "attractions_quality" in feature:
                     recommendations.append("Wybierz miejsce z lepszymi atrakcjami")
                 elif "travel_comfort" in feature:
-                    recommendations.append("Rozważ ofertę z lepszym komfortem podróży")
+                    recommendations.append("Rozwaz oferte z lepszym komfortem podrozy")
         
         return list(dict.fromkeys(recommendations))
     
     def print_decision(self, decision: Decision):
-        print("\n" + "="*50)
+        print("\n")
         print(f"DECYZJA: {'ZAAKCEPTOWANA' if decision.accepted else 'ODRZUCONA'}")
-        print(f"Pewność: {decision.probability:.1%}")
-        print(f"Wyjaśnienie: {decision.explanation}")
+        print(f"Pewnosc: {decision.probability:.1%}")
+        print(f"Wyjasnienie: {decision.explanation}")
         
         if decision.recommended_changes:
-            print("\mRekomendacje:")
+            print("\nRekomendacje:")
             for rec in decision.recommended_changes:
-                print(f"  • {rec}")
+                print(f"  {rec}")
         
         if decision.decision_path:
-            print("\nŚcieżka decyzyjna:")
+            print("\nSciezka decyzyjna:")
             for step in decision.decision_path:
-                status = "✓" if step["passed"] else "✗"
-                print(f"  {status} {step['feature']}: {step['value']:.2f} {'>' if step['passed'] else '≤'} {step['threshold']:.2f}")
+                status = "[+]" if step["passed"] else "[-]"
+                print(f"  {status} {step['feature']}: {step['value']:.2f} {'>' if step['passed'] else '<='} {step['threshold']:.2f}")
         
-        print("="*50 + "\n")
+        print()

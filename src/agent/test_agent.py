@@ -1,131 +1,97 @@
-"""
-Skrypt do testowania agenta z TWOIMI danymi
-"""
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent))
+
 from agent import TravelAgent, UserPreferences
 
 
-def test_agent():
-    """
-    Tutaj SAMEMU nadajesz dane i sprawdzasz skuteczność
-    """
-    # 1. Załaduj agenta
-    agent = TravelAgent(model_path="models/model_tree.pkl")
+def run_test():
+    print("TEST AGENTA TURYSTYCZNEGO")
     
-    # 2. Zdefiniuj test cases - TUTAJ WPISUJESZ SWOJE DANE
-    # 2. Zdefiniuj test cases - TUTAJ WPISUJESZ SWOJE DANE
-    # UWAGA: Wartości muszą być jak w generate.py!
-    # travel_comfort: 1-5
-    # attractions_quality: 1-5
-    # activities_match: 0-2
-    # season_match: 0 lub 1
-    # score: NIE PODAJESZ, oblicza się automatycznie!
+    try:
+        model_path = Path(__file__).parent.parent.parent / "models" / "model_tree.pkl"
+        agent = TravelAgent(str(model_path))
+        print(f"Agent zaladowany\n")
+    except Exception as e:
+        print(f"BLAD: {e}")
+        return
     
     test_cases = [
-        {
-            "name": "Dobra oferta - wszystko wysoko",
-            "prefs": UserPreferences(
-                travel_comfort=5,  # 1-5
-                attractions_quality=5,  # 1-5
-                activities_match=2,  # 0-2
-                season_match=1,  # 0 lub 1
-                user_budget="high",
-                trip_cost="low"
-            )
-        },
-        {
-            "name": "Zła oferta - niski budżet, wysoki koszt",
-            "prefs": UserPreferences(
-                travel_comfort=1,
-                attractions_quality=1,
-                activities_match=0,
-                season_match=0,
-                user_budget="low",
-                trip_cost="high"
-            )
-        },
-        {
-            "name": "Średnia oferta - wszystko średnie",
-            "prefs": UserPreferences(
-                travel_comfort=3,
-                attractions_quality=3,
-                activities_match=1,
-                season_match=1,
-                user_budget="medium",
-                trip_cost="medium"
-            )
-        },
-        {
-            "name": "Custom test 1 - TWOJE DANE",
-            "prefs": UserPreferences(
-                travel_comfort=4,
-                attractions_quality=4,
-                activities_match=2,
-                season_match=1,
-                user_budget="medium",
-                trip_cost="low"
-            )
-        },
-        # DODAJ WIĘCEJ TESTÓW TUTAJ:
-        # {
-        #     "name": "Mój test 2",
-        #     "prefs": UserPreferences(...)
-        # },
+        ("IDEALNA", UserPreferences(5, 5, 2, 1, "high", "high"), True),
+        ("DOBRA", UserPreferences(4, 4, 1, 1, "medium", "medium"), True),
+        ("SREDNIA", UserPreferences(3, 3, 1, 1, "medium", "medium"), None),
+        ("SLABA", UserPreferences(2, 2, 0, 0, "low", "high"), False),
+        ("FATALNA", UserPreferences(1, 1, 0, 0, "low", "high"), False),
     ]
     
-    # 3. Przetestuj każdy case
     results = []
-    for test in test_cases:
-        print(f"\n🧪 TEST: {test['name']}")
-        decision = agent.decide(test['prefs'])
-        agent.print_decision(decision)
+    correct = 0
+    accepted = 0
+    rejected = 0
+    
+    for i, (name, prefs, expected) in enumerate(test_cases, 1):
+        print(f"\nTEST {i}/5: {name}")
+        
+        score = prefs.compute_score()
+        print(f"INPUT:")
+        print(f"  travel_comfort: {prefs.travel_comfort}/5")
+        print(f"  attractions_quality: {prefs.attractions_quality}/5")
+        print(f"  activities_match: {prefs.activities_match}/2")
+        print(f"  season_match: {'TAK' if prefs.season_match == 1 else 'NIE'}")
+        print(f"  user_budget: {prefs.user_budget} | trip_cost: {prefs.trip_cost}")
+        print(f"  SCORE: {score}/10")
+        
+        decision = agent.decide(prefs)
+        
+        if decision.accepted:
+            status = "[+] ZAAKCEPTOWANA"
+            accepted += 1
+        else:
+            status = "[-] ODRZUCONA"
+            rejected += 1
+        
+        print(f"\n{status}")
+        print(f"Pewnosc: {decision.probability:.1%}")
+        
+        if expected is not None:
+            if expected == decision.accepted:
+                print(f"[OK] ZGODNE")
+                correct += 1
+            else:
+                print(f"[!] NIEZGODNE")
+        
+        if decision.recommended_changes:
+            print(f"\nRekomendacje:")
+            for rec in decision.recommended_changes:
+                print(f"  {rec}")
         
         results.append({
-            "name": test['name'],
+            "name": name,
+            "score": score,
             "accepted": decision.accepted,
-            "probability": decision.probability
+            "probability": decision.probability,
         })
     
-    # 4. Podsumowanie
-    print("\n📊 PODSUMOWANIE TESTÓW:")
-    print("-" * 60)
+    print("\n\nPODSUMOWANIE")
+    print(f"\nZaakceptowane: {accepted}/5 ({accepted/5*100:.0f}%)")
+    print(f"Odrzucone: {rejected}/5 ({rejected/5*100:.0f}%)")
+    
+    tests_with_expected = [tc for tc in test_cases if tc[2] is not None]
+    if tests_with_expected:
+        accuracy = correct / len(tests_with_expected) * 100
+        print(f"Dokladnosc: {correct}/{len(tests_with_expected)} ({accuracy:.0f}%)")
+    
+    scores = [r['score'] for r in results]
+    print(f"\nScore MIN: {min(scores)}, MAX: {max(scores)}, SREDNIA: {sum(scores)/len(scores):.1f}")
+    
+    print(f"\n{'TEST':<15} {'SCORE':<8} {'WYNIK':<18} {'PEWNOSC'}")
     for r in results:
-        status = "✅ PASS" if r["accepted"] else "❌ FAIL"
-        print(f"{status} | {r['name']:40} | {r['probability']:.1%}")
-    print("-" * 60)
+        result = "[+] ACCEPT" if r['accepted'] else "[-] REJECT"
+        print(f"{r['name']:<15} {r['score']:<8} {result:<18} {r['probability']:.1%}")
     
-    accepted_count = sum(1 for r in results if r["accepted"])
-    print(f"\nSkuteczność: {accepted_count}/{len(results)} zaakceptowanych ({accepted_count/len(results):.1%})")
-
-
-def test_single_case():
-    """
-    Test pojedynczego przypadku - szybkie sprawdzanie
-    """
-    agent = TravelAgent(model_path="models/model_tree.pkl")
-    
-    # ZMIEŃ TUTAJ WARTOŚCI ABY TESTOWAĆ:
-    # PAMIĘTAJ O ZAKRESACH:
-    # travel_comfort: 1-5
-    # attractions_quality: 1-5
-    # activities_match: 0-2
-    # season_match: 0 lub 1
-    
-    prefs = UserPreferences(
-        travel_comfort=5,
-        attractions_quality=5,
-        activities_match=2,
-        season_match=1,
-        user_budget="high",
-        trip_cost="medium"
-    )
-    
-    decision = agent.decide(prefs)
-    agent.print_decision(decision)
+    print("\nTEST ZAKONCZONY")
 
 
 if __name__ == "__main__":
-    # Uruchom pełne testy
-    test_agent()
-    
-    # LUB uruchom pojedynczy test:
-    # test_single_case()
+    run_test()

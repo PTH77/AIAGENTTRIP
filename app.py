@@ -2,9 +2,94 @@ import streamlit as st
 import requests
 from pathlib import Path
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).parent / "src" / "agent"))
 from agent import TravelAgent, UserPreferences
+
+PRESET_CITIES = {
+    "Paris": {
+        "total": 232,
+        "quality": 5,
+        "offers": ["culture", "food", "romance", "shopping", "history"]
+    },
+    "London": {
+        "total": 215,
+        "quality": 5,
+        "offers": ["culture", "shopping", "nightlife", "history", "music"]
+    },
+    "Rome": {
+        "total": 198,
+        "quality": 4,
+        "offers": ["culture", "history", "food", "romance"]
+    },
+    "Barcelona": {
+        "total": 187,
+        "quality": 4,
+        "offers": ["culture", "beach", "nightlife", "food", "sport"]
+    },
+    "Amsterdam": {
+        "total": 165,
+        "quality": 4,
+        "offers": ["culture", "nightlife", "family", "history"]
+    },
+    "Prague": {
+        "total": 142,
+        "quality": 4,
+        "offers": ["culture", "romance", "history", "nightlife"]
+    },
+    "Vienna": {
+        "total": 138,
+        "quality": 4,
+        "offers": ["culture", "history", "music", "food"]
+    },
+    "Berlin": {
+        "total": 125,
+        "quality": 4,
+        "offers": ["culture", "nightlife", "history", "shopping"]
+    },
+    "Warsaw": {
+        "total": 82,
+        "quality": 3,
+        "offers": ["culture", "history", "family", "food"]
+    },
+    "Lisbon": {
+        "total": 95,
+        "quality": 3,
+        "offers": ["culture", "beach", "food", "nightlife"]
+    },
+    "Budapest": {
+        "total": 88,
+        "quality": 3,
+        "offers": ["culture", "history", "spa", "nightlife"]
+    },
+    "Copenhagen": {
+        "total": 76,
+        "quality": 3,
+        "offers": ["culture", "family", "design", "food"]
+    },
+    "Dublin": {
+        "total": 65,
+        "quality": 3,
+        "offers": ["culture", "nightlife", "nature", "music"]
+    },
+    "Krakow": {
+        "total": 45,
+        "quality": 2,
+        "offers": ["culture", "history", "food", "nightlife"]
+    },
+    "Porto": {
+        "total": 38,
+        "quality": 2,
+        "offers": ["culture", "food", "beach", "history"]
+    }
+}
+
+ALL_ACTIVITIES = [
+    "culture", "history", "food", "beach", "nightlife", 
+    "shopping", "nature", "family", "romance", "sport", 
+    "music", "design", "spa"
+]
 
 def get_city_coordinates(city_name):
     try:
@@ -17,138 +102,172 @@ def get_city_coordinates(city_name):
         
         return {
             'name': data[0].get('name', city_name),
-            'display_name': data[0].get('display_name', city_name),
             'lat': float(data[0]['lat']),
             'lon': float(data[0]['lon'])
         }
-    except Exception as e:
-        st.error(f"Blad geocoding: {e}")
+    except:
         return None
 
-def get_attractions_data(lat, lon, radius=5000):
+def get_attractions_overpass(lat, lon):
     try:
         query = f"""
-        [out:json];
+        [out:json][timeout:25];
         (
-          node["tourism"](around:{radius},{lat},{lon});
-          way["tourism"](around:{radius},{lat},{lon});
+          node["tourism"](around:5000,{lat},{lon});
+          way["tourism"](around:5000,{lat},{lon});
         );
         out count;
         """
         
         url = "https://overpass-api.de/api/interpreter"
         response = requests.post(url, data={'data': query}, timeout=30)
+        
+        if response.status_code != 200:
+            return None
+            
         data = response.json()
         
         if 'elements' in data and data['elements']:
             tags = data['elements'][0].get('tags', {})
             total = int(tags.get('total', 0))
             
-            attractions_quality = min(int(total / 40) + 1, 5)
-            activities_match = min(int(total / 80), 2)
+            if total >= 200:
+                quality = 5
+            elif total >= 100:
+                quality = 4
+            elif total >= 50:
+                quality = 3
+            elif total >= 20:
+                quality = 2
+            else:
+                quality = 1
             
-            return {
-                'total_attractions': total,
-                'attractions_quality': attractions_quality,
-                'activities_match': activities_match
-            }
+            return {'total': total, 'quality': quality}
         return None
-    except Exception as e:
-        st.error(f"Blad pobierania atrakcji: {e}")
+    except:
         return None
 
-def find_alternative_cities(user_prefs, current_city_score):
-    cities = [
-        "Paris", "London", "Tokyo", "New York", "Barcelona", 
-        "Rome", "Amsterdam", "Prague", "Vienna", "Berlin",
-        "Dubai", "Singapore", "Lisbon", "Copenhagen", "Istanbul"
-    ]
+def calculate_activities_match(city_offers, user_interests):
+    if not user_interests:
+        return 1
     
-    alternatives = []
-    for city in cities[:5]:
-        coords = get_city_coordinates(city)
-        if coords:
-            attractions = get_attractions_data(coords['lat'], coords['lon'])
-            if attractions:
-                test_prefs = UserPreferences(
-                    travel_comfort=user_prefs.travel_comfort,
-                    attractions_quality=attractions['attractions_quality'],
-                    activities_match=attractions['activities_match'],
-                    season_match=user_prefs.season_match,
-                    user_budget=user_prefs.user_budget,
-                    trip_cost=user_prefs.trip_cost
-                )
-                score = test_prefs.compute_score()
-                
-                if score > current_city_score:
-                    alternatives.append({
-                        'city': city,
-                        'score': score,
-                        'attractions_quality': attractions['attractions_quality'],
-                        'activities_match': attractions['activities_match']
-                    })
+    common = set(city_offers) & set(user_interests)
     
-    return sorted(alternatives, key=lambda x: x['score'], reverse=True)[:3]
+    if len(common) >= 2:
+        return 2
+    elif len(common) >= 1:
+        return 1
+    else:
+        return 0
 
 st.set_page_config(page_title="Agent Turystyczny", layout="wide")
-
 st.title("Agent Decyzyjny - Rekomendacja Podrozy")
-st.markdown("System analizujacy czy destynacja spelnia Twoje wymagania na podstawie prawdziwych danych z OpenStreetMap")
 
-st.sidebar.header("Krok 1: Twoje wymagania")
+st.sidebar.header("KROK 1: Twoje preferencje")
 
-travel_comfort = st.sidebar.slider("Komfort podrozy", 1, 5, 3, 
-    help="1=basic, 5=luxury")
-season_match = st.sidebar.selectbox("Dobry sezon?", [1, 0], 
-    format_func=lambda x: "Tak" if x == 1 else "Nie")
-user_budget = st.sidebar.selectbox("Twoj budzet", ["low", "medium", "high"])
-trip_cost = st.sidebar.selectbox("Akceptowalny koszt wycieczki", ["low", "medium", "high"])
+comfort = st.sidebar.slider("Komfort podrozy (1=basic, 5=luxury)", 1, 5, 3)
+season = st.sidebar.selectbox("Dobry sezon?", ["Tak", "Nie"])
+season_value = 1 if season == "Tak" else 0
+budget = st.sidebar.selectbox("Twoj budzet", ["low", "medium", "high"])
+cost = st.sidebar.selectbox("Akceptowalny koszt wycieczki", ["low", "medium", "high"])
 
 st.sidebar.markdown("---")
-st.sidebar.header("Krok 2: Wybierz miasto")
+st.sidebar.subheader("Co Cie interesuje?")
 
-city_input = st.sidebar.text_input("Wpisz nazwe miasta (po angielsku)", "Paris")
+interests = st.sidebar.multiselect(
+    "Wybierz swoje zainteresowania (min 1)",
+    ALL_ACTIVITIES,
+    default=["culture"]
+)
 
-if st.sidebar.button("Sprawdz to miasto", type="primary"):
-    with st.spinner("Pobieram dane z OpenStreetMap..."):
-        coords = get_city_coordinates(city_input)
-        
-        if not coords:
-            st.error(f"Nie znaleziono miasta: {city_input}")
-        else:
-            st.success(f"Znaleziono: {coords['display_name']}")
-            
-            attractions = get_attractions_data(coords['lat'], coords['lon'])
-            
-            if not attractions:
-                st.error("Nie udalo sie pobrac danych o atrakcjach")
-            else:
-                st.session_state['city_data'] = {
-                    'coords': coords,
-                    'attractions': attractions,
-                    'user_prefs': {
-                        'travel_comfort': travel_comfort,
-                        'season_match': season_match,
-                        'user_budget': user_budget,
-                        'trip_cost': trip_cost
-                    }
-                }
+st.sidebar.markdown("---")
+st.sidebar.header("KROK 2: Wybierz miasto")
 
-if 'city_data' in st.session_state:
-    data = st.session_state['city_data']
-    coords = data['coords']
-    attractions = data['attractions']
-    user_prefs_dict = data['user_prefs']
+use_preset = st.sidebar.checkbox("Uzyj gotowej listy (polecane)", value=True)
+
+if use_preset:
+    city = st.sidebar.selectbox("Miasto", list(PRESET_CITIES.keys()))
+    st.sidebar.info("Dane z cache - natychmiastowe wyniki")
+else:
+    city = st.sidebar.text_input("Wpisz nazwe miasta (po angielsku)", "Paris")
+    st.sidebar.warning("Pobieranie z Overpass API - moze nie dzialac (rate limit)")
+
+if st.sidebar.button("SPRAWDZ MIASTO", type="primary"):
     
-    st.subheader(f"Analiza: {coords['name']}")
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    
+    if use_preset and city in PRESET_CITIES:
+        preset = PRESET_CITIES[city]
+        match = calculate_activities_match(preset["offers"], interests)
+        
+        st.session_state["result"] = {
+            "city": city,
+            "total": preset["total"],
+            "quality": preset["quality"],
+            "match": match,
+            "offers": preset["offers"],
+            "interests": list(interests),
+            "common": list(set(preset["offers"]) & set(interests)),
+            "comfort": comfort,
+            "season": season_value,
+            "budget": budget,
+            "cost": cost,
+            "source": "preset"
+        }
+        st.success(f"Zaladowano: {city}")
+    else:
+        with st.spinner("Szukam miasta..."):
+            coords = get_city_coordinates(city)
+            
+            if not coords:
+                st.error(f"Nie znaleziono: {city}")
+            else:
+                with st.spinner("Pobieram atrakcje (30 sek)..."):
+                    time.sleep(2)
+                    attractions = get_attractions_overpass(coords['lat'], coords['lon'])
+                
+                if not attractions:
+                    st.error("Blad Overpass API - uzyj gotowej listy")
+                else:
+                    match = 1
+                    
+                    st.session_state["result"] = {
+                        "city": coords['name'],
+                        "total": attractions['total'],
+                        "quality": attractions['quality'],
+                        "match": match,
+                        "offers": [],
+                        "interests": list(interests),
+                        "common": [],
+                        "comfort": comfort,
+                        "season": season_value,
+                        "budget": budget,
+                        "cost": cost,
+                        "source": "api"
+                    }
+                    st.success(f"Pobrano: {coords['name']}")
+
+if "result" in st.session_state:
+    r = st.session_state["result"]
+    
+    st.subheader(f"Analiza: {r['city']}")
+    
+    if r['source'] == 'preset':
+        st.caption(f"Miasto oferuje: {', '.join(r['offers'])}")
+        st.caption(f"Twoje zainteresowania: {', '.join(r['interests'])}")
+        if r['common']:
+            st.caption(f"Wspolne: {', '.join(r['common'])}")
+    else:
+        st.caption(f"Zrodlo: Overpass API | Zainteresowania: {', '.join(r['interests'])}")
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Liczba atrakcji", attractions['total_attractions'])
+        st.metric("Liczba atrakcji", r['total'])
     with col2:
-        st.metric("Jakosc atrakcji (obliczona)", f"{attractions['attractions_quality']}/5")
+        st.metric("Jakosc atrakcji", f"{r['quality']}/5")
     with col3:
-        st.metric("Dopasowanie aktywnosci", f"{attractions['activities_match']}/2")
+        st.metric("Dopasowanie zainteresowan", f"{r['match']}/2")
     
     st.markdown("---")
     
@@ -157,12 +276,12 @@ if 'city_data' in st.session_state:
         agent = TravelAgent(str(model_path))
         
         prefs = UserPreferences(
-            travel_comfort=user_prefs_dict['travel_comfort'],
-            attractions_quality=attractions['attractions_quality'],
-            activities_match=attractions['activities_match'],
-            season_match=user_prefs_dict['season_match'],
-            user_budget=user_prefs_dict['user_budget'],
-            trip_cost=user_prefs_dict['trip_cost']
+            travel_comfort=r['comfort'],
+            attractions_quality=r['quality'],
+            activities_match=r['match'],
+            season_match=r['season'],
+            user_budget=r['budget'],
+            trip_cost=r['cost']
         )
         
         decision = agent.decide(prefs)
@@ -172,7 +291,7 @@ if 'city_data' in st.session_state:
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Score", f"{score}/10")
+            st.metric("SCORE", f"{score}/10")
         with col2:
             st.metric("Pewnosc modelu", f"{decision.probability:.1%}")
         with col3:
@@ -184,38 +303,22 @@ if 'city_data' in st.session_state:
         st.info(decision.explanation)
         
         if decision.recommended_changes:
-            st.subheader("Rekomendacje dla tego miasta")
+            st.subheader("Rekomendacje")
             for rec in decision.recommended_changes:
                 st.write(f"- {rec}")
-        
-        if not decision.accepted:
-            st.markdown("---")
-            st.subheader("Alternatywne miasta ktore moga lepiej pasowac")
-            
-            with st.spinner("Szukam lepszych opcji..."):
-                alternatives = find_alternative_cities(prefs, score)
-                
-                if alternatives:
-                    for alt in alternatives:
-                        with st.expander(f"{alt['city']} (Score: {alt['score']}/10)"):
-                            st.write(f"Jakosc atrakcji: {alt['attractions_quality']}/5")
-                            st.write(f"Dopasowanie aktywnosci: {alt['activities_match']}/2")
-                            st.write(f"Przewidywany score: {alt['score']}/10")
-                else:
-                    st.info("Nie znaleziono lepszych alternatyw w bazie")
         
         with st.expander("Sciezka decyzyjna"):
             if decision.decision_path:
                 for step in decision.decision_path:
-                    status = "[+]" if step["passed"] else "[-]"
-                    operator = ">" if step["passed"] else "<="
-                    st.text(f"{status} {step['feature']}: {step['value']:.2f} {operator} {step['threshold']:.2f}")
+                    symbol = "[+]" if step["passed"] else "[-]"
+                    op = ">" if step["passed"] else "<="
+                    st.text(f"{symbol} {step['feature']}: {step['value']:.2f} {op} {step['threshold']:.2f}")
     
     except Exception as e:
         st.error(f"Blad agenta: {e}")
 
 else:
-    st.info("Ustaw swoje wymagania w panelu bocznym, potem wpisz miasto i kliknij 'Sprawdz to miasto'")
+    st.info("Ustaw preferencje, wybierz miasto i kliknij SPRAWDZ MIASTO")
 
 st.markdown("---")
-st.caption("Dane z OpenStreetMap via Overpass API | System rekomendacyjny oparty na drzewie decyzyjnym")
+st.caption("System rekomendacyjny | 15 miast preset + Overpass API | Praca inzynierska 2025")
